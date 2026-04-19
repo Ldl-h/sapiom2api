@@ -169,6 +169,9 @@ importers:
       '@sapiom/axios':
         specifier: ^0.5.0
         version: 0.5.0(axios@1.15.0)
+      '@sapiom/fetch':
+        specifier: ^0.5.0
+        version: 0.5.0
       '@workspace/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
@@ -1532,6 +1535,10 @@ packages:
 
   '@sapiom/core@0.5.0':
     resolution: {integrity: sha512-uZ3qskuipmhxE4PTecgc2w5pHEtYdqGKyhQ4RalHrmx1S40/449Rt+R7eCTvvJQxMmiEWiZTXI+6IfwCsaTUkA==}
+    engines: {node: '>=18.0.0'}
+
+  '@sapiom/fetch@0.5.0':
+    resolution: {integrity: sha512-aueInzvDHlXliem49aubTsY8aiG/6T9CpHJ5mEFoR/HjE6o8MC2AXS7pHlImzohRGPKffAMTEw+2zqQyQN6/Ug==}
     engines: {node: '>=18.0.0'}
 
   '@scalar/helpers@0.2.18':
@@ -4252,6 +4259,10 @@ snapshots:
       axios: 1.15.0
 
   '@sapiom/core@0.5.0': {}
+
+  '@sapiom/fetch@0.5.0':
+    dependencies:
+      '@sapiom/core': 0.5.0
 
   '@scalar/helpers@0.2.18': {}
 

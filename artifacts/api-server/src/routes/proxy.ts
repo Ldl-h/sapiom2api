@@ -1,25 +1,37 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { apiKeysTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import axios, { type AxiosInstance } from "axios";
 import { withSapiom } from "@sapiom/axios";
+import { createFetch } from "@sapiom/fetch";
 
 const router = Router();
 
 const SAPIOM_BASE = "https://openrouter.services.sapiom.ai";
 
-// Cache one client per API key — mirrors how the original server.js works
-// (one persistent sapiomClient at startup rather than recreating per request)
-const clientCache = new Map<string, AxiosInstance>();
+// ── Client caches ────────────────────────────────────────────────────────────
+// Each API key gets its own persistent client. Mirrors the original server.js
+// pattern of creating a single client at startup so transaction state is preserved.
 
-function getClient(apiKey: string): AxiosInstance {
-  if (!clientCache.has(apiKey)) {
-    clientCache.set(apiKey, withSapiom(axios.create(), { apiKey }));
+const axiosCache = new Map<string, AxiosInstance>();
+function getAxiosClient(apiKey: string): AxiosInstance {
+  if (!axiosCache.has(apiKey)) {
+    axiosCache.set(apiKey, withSapiom(axios.create(), { apiKey }));
   }
-  return clientCache.get(apiKey)!;
+  return axiosCache.get(apiKey)!;
 }
 
+type SapiomFetch = ReturnType<typeof createFetch>;
+const fetchCache = new Map<string, SapiomFetch>();
+function getFetchClient(apiKey: string): SapiomFetch {
+  if (!fetchCache.has(apiKey)) {
+    fetchCache.set(apiKey, createFetch({ apiKey }));
+  }
+  return fetchCache.get(apiKey)!;
+}
+
+// ── Key selection ─────────────────────────────────────────────────────────────
 async function getActiveKey(): Promise<string | null> {
   const keys = await db
     .select({ key: apiKeysTable.key })
@@ -29,7 +41,7 @@ async function getActiveKey(): Promise<string | null> {
   return keys[Math.floor(Math.random() * keys.length)].key;
 }
 
-// GET /v1/models
+// ── GET /v1/models ────────────────────────────────────────────────────────────
 router.get("/v1/models", async (req, res) => {
   try {
     const apiKey = await getActiveKey();
@@ -37,10 +49,10 @@ router.get("/v1/models", async (req, res) => {
       res.status(503).json({ error: { message: "No active API keys available" } });
       return;
     }
-    const client = getClient(apiKey);
+    const client = getAxiosClient(apiKey);
     const response = await client.get(`${SAPIOM_BASE}/v1/models`);
     res.json(response.data);
-  } catch (err: any) {
+  } catch {
     const fallbackModels = [
       "openai/gpt-4o-mini", "openai/gpt-4o", "openai/gpt-4.1-mini", "openai/gpt-4.1-nano",
       "anthropic/claude-sonnet-4", "anthropic/claude-haiku-3.5",
@@ -51,7 +63,7 @@ router.get("/v1/models", async (req, res) => {
   }
 });
 
-// POST /v1/chat/completions
+// ── POST /v1/chat/completions ─────────────────────────────────────────────────
 router.post("/v1/chat/completions", async (req, res) => {
   const body = req.body;
   const isStream = body.stream === true;
@@ -64,50 +76,29 @@ router.post("/v1/chat/completions", async (req, res) => {
     return;
   }
 
-  const client = getClient(apiKey);
-
   if (isStream) {
-    // Step 1: make a non-stream preflight so @sapiom/axios can handle x402 auth properly.
-    // The interceptor cannot parse 402 body when responseType is 'stream',
-    // so we get authorization first with a regular request, then stream.
-    let paymentHeaders: Record<string, string> = {};
-    try {
-      // Use axios without stream to trigger the sapiom auth flow
-      // Send stream:false so the server doesn't start streaming on this call
-      await client.post(
-        `${SAPIOM_BASE}/v1/chat/completions`,
-        { ...body, stream: false, max_tokens: 1 },
-        { timeout: 15000 }
-      );
-      // Auth headers are now embedded in the cached client for subsequent calls
-    } catch (prefErr: any) {
-      // Extract any payment/auth headers the interceptor may have added to config
-      const headers = prefErr?.config?.headers ?? {};
-      for (const h of ["PAYMENT-SIGNATURE", "X-PAYMENT", "X-Sapiom-Transaction-Id"]) {
-        if (headers[h]) paymentHeaders[h] = headers[h];
-      }
-      if (prefErr.response?.status !== 402 && prefErr.response?.status !== 200 && !Object.keys(paymentHeaders).length) {
-        req.log.warn({ status: prefErr.response?.status }, "preflight failed but continuing with stream");
-      }
-    }
+    // Use @sapiom/fetch for streaming — it handles x402 via fetch's native response,
+    // so the 402 body is always read as JSON (never as a stream), and the retry
+    // carries proper payment headers before starting the actual SSE stream.
+    const sapiomFetch = getFetchClient(apiKey);
 
-    // Step 2: now do the real streaming request.
-    // Collect any auth headers from recent successful calls on this client instance.
     try {
-      const response = await client.post(
-        `${SAPIOM_BASE}/v1/chat/completions`,
-        body,
-        {
-          responseType: "stream",
-          decompress: false,
-          timeout: 310000, // slightly over 300s — keep-alive handles the rest
-          headers: {
-            Accept: "text/event-stream",
-            "Accept-Encoding": "identity",
-            ...paymentHeaders,
-          },
-        }
-      );
+      const upstream = await sapiomFetch(`${SAPIOM_BASE}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!upstream.ok) {
+        const errBody = await upstream.json().catch(() => ({
+          error: { message: `Upstream error ${upstream.status}` },
+        }));
+        res.status(upstream.status).json(errBody);
+        return;
+      }
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -115,43 +106,56 @@ router.post("/v1/chat/completions", async (req, res) => {
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
 
-      // Send keep-alive ping every 20s to beat Replit's 300s proxy timeout
+      // Keep-alive ping every 20 s to beat Replit's 300s proxy timeout
       const keepAlive = setInterval(() => {
         if (!res.writableEnded) res.write(": ping\n\n");
       }, 20000);
 
-      response.data.on("data", (chunk: Buffer) => {
-        if (!res.writableEnded) res.write(chunk);
-      });
-
-      response.data.on("end", () => {
+      const cleanup = () => {
         clearInterval(keepAlive);
-        if (!res.writableEnded) res.end();
-      });
+      };
 
-      response.data.on("error", (err: Error) => {
-        clearInterval(keepAlive);
-        req.log.error({ err }, "stream error");
-        if (!res.writableEnded) res.end();
-      });
+      if (!upstream.body) {
+        cleanup();
+        res.end();
+        return;
+      }
+
+      // Pipe the ReadableStream to Express response using Node.js stream API
+      const reader = upstream.body.getReader();
+      const pump = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!res.writableEnded) res.write(value);
+          }
+        } catch (err) {
+          req.log.error({ err }, "stream read error");
+        } finally {
+          cleanup();
+          if (!res.writableEnded) res.end();
+        }
+      };
 
       req.on("close", () => {
-        clearInterval(keepAlive);
-        response.data.destroy();
+        cleanup();
+        reader.cancel().catch(() => {});
       });
+
+      pump();
     } catch (err: any) {
-      req.log.error({ status: err.response?.status }, "stream request failed");
-      const status = err.response?.status || 500;
-      const data = err.response?.data || { error: { message: err.message } };
+      req.log.error({ err: err.message }, "stream request failed");
       if (!res.headersSent) {
-        res.status(status).json(data);
+        res.status(500).json({ error: { message: err.message } });
       } else if (!res.writableEnded) {
         res.end();
       }
     }
   } else {
-    // Non-streaming
+    // Non-streaming — use @sapiom/axios (works perfectly for JSON responses)
     try {
+      const client = getAxiosClient(apiKey);
       const response = await client.post(`${SAPIOM_BASE}/v1/chat/completions`, body);
       res.json(response.data);
     } catch (err: any) {
@@ -162,7 +166,7 @@ router.post("/v1/chat/completions", async (req, res) => {
   }
 });
 
-// POST /v1/embeddings
+// ── POST /v1/embeddings ───────────────────────────────────────────────────────
 router.post("/v1/embeddings", async (req, res) => {
   const body = req.body;
   req.log.info({ model: body.model }, "embeddings");
@@ -173,7 +177,7 @@ router.post("/v1/embeddings", async (req, res) => {
       res.status(503).json({ error: { message: "No active API keys available" } });
       return;
     }
-    const client = getClient(apiKey);
+    const client = getAxiosClient(apiKey);
     const response = await client.post(`${SAPIOM_BASE}/v1/embeddings`, body);
     res.json(response.data);
   } catch (err: any) {

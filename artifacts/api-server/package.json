@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@sapiom/axios": "^0.5.0",
+    "@sapiom/fetch": "^0.5.0",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "axios": "^1.15.0",
