@@ -46,7 +46,7 @@ export function Dashboard() {
       queryClient.invalidateQueries({ queryKey: getGetKeyStatsQueryKey() });
       toast({
         title: `已清除 ${result.deleted} 个无效 key`,
-        description: "所有检测状态为"无效"的 key 已从数据库中删除。",
+        description: '所有检测状态为「无效」的 key 已从数据库中删除。',
       });
     } catch (e) {
       toast({ title: "清除失败", description: String(e), variant: "destructive" });

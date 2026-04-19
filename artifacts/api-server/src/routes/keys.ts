@@ -247,8 +247,8 @@ async function checkKeyValidity(key: string): Promise<{ status: string; message:
   let apiBody = "";
   if ("json" in resp) {
     try {
-      const j = await (resp as Response).json();
-      apiBody = j.message || j.error || JSON.stringify(j).slice(0, 100);
+      const j = await (resp as Response).json() as Record<string, unknown>;
+      apiBody = String(j.message || j.error || JSON.stringify(j).slice(0, 100));
     } catch {}
   }
 
