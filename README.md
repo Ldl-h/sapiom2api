@@ -2,6 +2,8 @@
 
 An OpenAI-compatible reverse proxy for [Sapiom](https://sapiom.ai)'s OpenRouter service (`https://openrouter.services.sapiom.ai`). Manages a pool of `sk_live_*` API keys, rotates them automatically, validates their health, and provides a password-protected web UI for key management.
 
+[![Deploy on Deno](https://deno.com/button)](https://console.deno.com/new?clone=https://github.com/sayrui/split2api)
+
 ## Features
 
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK or tool
