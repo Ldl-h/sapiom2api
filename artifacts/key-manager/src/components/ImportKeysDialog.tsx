@@ -32,10 +32,13 @@ export function ImportKeysDialog({ open, onOpenChange }: { open: boolean; onOpen
         throw new Error("JSON must be an array");
       }
     } catch (e) {
-      // Fallback to line-by-line format
-      const lines = input.split('\n').map(line => line.trim()).filter(Boolean);
-      keysData = lines.map(line => ({
-        key: line,
+      // Fallback: split by newlines AND commas, then clean up
+      const tokens = input
+        .split(/[\n,]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      keysData = tokens.map(token => ({
+        key: token,
         name: "Imported Key"
       }));
     }
@@ -79,7 +82,7 @@ export function ImportKeysDialog({ open, onOpenChange }: { open: boolean; onOpen
         <DialogHeader>
           <DialogTitle>Import Keys</DialogTitle>
           <DialogDescription>
-            Paste your keys here. You can paste one key per line, or a JSON array of objects.
+            Paste your keys here. Supports comma-separated, one-per-line, or JSON array format.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
