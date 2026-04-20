@@ -47,7 +47,4 @@ jobs:
           # Must match the project name created on dash.deno.com
           entrypoint: main.ts
           project: sapiom2api
-          include: |
-            main.ts
-            deno.json
-            dist
+          token: ${{ secrets.DENO_DEPLOY_TOKEN }} 
