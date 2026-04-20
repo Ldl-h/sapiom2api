@@ -47,7 +47,6 @@ jobs:
           # Must match the project name created on dash.deno.com
           project: ldlhsapiom2api
           entrypoint: main.ts
-          root: split2api
           include: |
             main.ts
             deno.json
