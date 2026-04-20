@@ -43,6 +43,8 @@ jobs:
 
       - name: Deploy to Deno Deploy
         uses: denoland/deployctl@v1
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
         with:
           # Must match the project name created on dash.deno.com
           project: ldlhsapiom2api
