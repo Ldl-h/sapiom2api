@@ -45,6 +45,7 @@ jobs:
         uses: denoland/deployctl@v1
         with:
           # Must match the project name created on dash.deno.com
+          entrypoint: main.ts
           project: sapiom2api
           include: |
             main.ts
